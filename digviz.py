@@ -17,11 +17,94 @@ import numpy as np
 import pandas as pd
 import logging
 
+import h5py
+from enum import Enum
+
 import colorer # colored log output
 
+class DataType(Enum):
+    # define the supported data formats (that need individual parsing)
+    DPPQDC = 1
+    DPPQDC_EXT = 2
+    STANDARD = 3
+    DPPQDC_MIXED = 257
+    DPPQDC_EXT_MIXED = 258
+
+def load_csv(file_name):
+    '''
+    Loads data from a CSV file. Formats currently supported:
+    - DPP-QDC data (XX740-family)
+    '''
+    return pd.read_csv(file_name, sep=" ", header=None, names=['ts','dig','ch','ph'])
+
+def load_h5(file_name):
+    """
+    Loads data stored with JADAQ from an HDF5 file. Supports so far:
+    - Standard wave function (recorded with XX751)
+    """
+    log = logging.getLogger('digviz')  # set up logging
+
+    f = h5py.File(file_name, 'r')
+    # TODO check version of data format in file and give out warning if newer than expected
+
+    all_digi = list(f.keys())
+    log.info("File {} contains data from digitizers: {}".format(file_name, ",".join(all_digi)))
+
+    dfs = []
+
+    for digi in all_digi:
+        # TODO catch exception should data format not be known
+        dformat = DataType(f[digi].attrs.get('JADAQ_DATA_TYPE'))
+        log.info(f"Data format for digitizer {digi}: {dformat}")
+
+        if dformat == DataType.STANDARD:
+            evtform = np.dtype([('evtno', np.uint32), ('ts', np.uint32), ('ch', np.uint8),
+                                ('samples', np.object)])
+
+            # data length calculation
+            nevts = sum([len(f[digi][g]) for g in f[digi].keys()])
+            # each event consists of several active channels; get number from channel mask of first event
+            first_data = list(f[digi].keys())[0]
+            first_event = f[digi][first_data][0]
+            chmask = first_event[1]
+            nch = bin(chmask).count('1') # count active channels in mask
+            # compose list of active channels from channel mask
+            channels = [position for position, bit in enumerate([(chmask >> bit) & 1 for bit in range(7)]) if bit]
+            print (channels)
+            # adjust number of events accordingly
+            nevts *= nch
+
+        nblocks = len(list(f[digi].keys()))
+        log.info(f"Found a total of {nevts} samples (or events) stored in {nblocks} data blocks")
+
+        # reserve memory for numpy data array holding events
+        data = np.zeros(nevts, dtype=evtform)
+
+        # loop over all events in all data blocks stored for this digitizer
+        for idx, evt in enumerate([e for dblock in list(f[digi].keys()) for e in f[digi][dblock]]):
+                if dformat == DataType.STANDARD:
+                    # split the combined samples for all channels and create single events
+                    for i,s in enumerate(np.split(evt[4],nch)):
+                        data[idx*nch+i] = np.array((evt[2], evt[0], np.uint8(channels[i]), s), dtype=evtform)
+        df = pd.DataFrame(data)
+        # add an identifier column for the digitizer model+serial
+        df["digitizer"] = str(digi) # TODO str wastes storage space here; keep a uint8 digitizer index and a map to the name instead?
+        dfs.append(df)
+
+    # concatenate results (if needed)
+    if len(dfs) == 1:
+        return dfs[0]
+    else:
+        return pd.concat(dfs)
 
 def load_df(file_name):
-    return pd.read_csv(file_name, sep=" ", header=None, names=['ts','dig','ch','ph'])
+    if str(file_name).endswith('.csv'):
+        return load_csv(file_name)
+    elif str(file_name).endswith('.h5'):
+        return load_h5(file_name)
+    else:
+        print(f"Unknown file ending, only supported types are 'csv' and 'h5': {file_name}")
+        sys.exit(2)
 
 def calculate_time_difference(dataframe):
     """

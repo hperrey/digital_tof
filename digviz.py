@@ -342,7 +342,9 @@ if __name__ == "__main__":
         import IPython
         IPython.embed()
     else:
-        plot_ch(msrmts, fileDescr)
+        plot_ch(msrmts, labels=fileDescr)
+        plot_samples(msrmts, labels=fileDescr)
+        plot_persistantTrace(msrmts, labels=fileDescr)
 
         plt.show(block=False)  # block to allow "hit enter to close"
         plt.pause(0.001)  # <-------

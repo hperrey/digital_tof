@@ -42,7 +42,7 @@ def load_h5(file_name):
     Loads data stored with JADAQ from an HDF5 file. Supports so far:
     - Standard wave function (recorded with XX751)
     """
-    log = logging.getLogger('digviz')  # set up logging
+    log = init_logging('digviz')  # set up logging
 
     f = h5py.File(file_name, 'r')
     # TODO check version of data format in file and give out warning if newer than expected
@@ -111,7 +111,7 @@ def calculate_time_difference(dataframe):
     Adds a column 'delta_ts' with time difference between neighbouring
     events. Potential overflows are reported as warnings in the log.
     """
-    log = logging.getLogger('digviz')  # set up logging
+    log = init_logging('digviz')  # set up logging
     dataframe['delta_ts'] = (dataframe['ts'] - dataframe['ts'].shift()).fillna(0)
     for index, row in dataframe[dataframe['delta_ts'] < 0].iterrows():
         log.warning(

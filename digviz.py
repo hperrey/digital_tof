@@ -151,6 +151,63 @@ def plot_ph(measurements, query=None, labels=None):
     plt.legend()
     return fig, ax
 
+
+def persistantTracePlot(samples, gridsize=250):
+    ''' show "persistent" trace picture '''
+    fig, ax = plt.subplots()
+    time = np.concatenate([range(len(s)) for s in samples])
+    ampl = np.concatenate([s for s in samples])
+    plt.xlabel('time')
+    plt.ylabel('ampl')
+    plt.hexbin(time, ampl, bins='log', gridsize=gridsize)
+    plt.title("persistent trace in 2D hex binning")
+    cb = plt.colorbar()
+    cb.set_label('log10(N)')
+    # adjust axis range
+    x1,x2,y1,y2 = plt.axis()
+    plt.axis((x1,x2,1.1*y1,1.1*y2))
+    return fig, ax
+
+
+def plot_persistantTrace(measurements, query=None, labels=None):
+    for idx, df in enumerate(measurements):
+        l = "file {}".format(idx)
+        try:
+            l = labels[idx]
+        except:
+            pass
+        if not 'samples' in df.columns:
+            continue
+        if query is not None:
+            samples = df.query(query)['samples']
+        else:
+            samples = df['samples']
+        persistantTracePlot(samples)
+        plt.title(f"persistent trace for {l}")
+
+def plot_samples(measurements, query=None, labels=None):
+    fig, ax = plt.subplots()
+    # set up colors
+    cmap = plt.get_cmap('gnuplot')
+    colors = [cmap(i) for i in np.linspace(0, 1, len(measurements))]
+
+    for idx, df in enumerate(measurements):
+        l = "file {}".format(idx)
+        try:
+            l = labels[idx]
+        except:
+            pass
+        if not 'samples' in df.columns:
+            continue
+        if query is not None:
+            samples = df.query(query)['samples']
+        else:
+            samples = df['samples']
+        for s in samples:
+            p = ax.plot(range(len(s)), s, color=colors[idx])
+        ax.legend(p, [l])
+    return fig, ax
+
 def plot_ph_per_channel(measurements, query=None, labels=None):
     fig, ax = plt.subplots()
     for idx, df in enumerate(measurements):

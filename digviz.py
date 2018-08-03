@@ -69,13 +69,12 @@ def load_h5(file_name):
             chmask = first_event[1]
             nch = bin(chmask).count('1') # count active channels in mask
             # compose list of active channels from channel mask
-            channels = [position for position, bit in enumerate([(chmask >> bit) & 1 for bit in range(7)]) if bit]
-            print (channels)
+            channels = [position for position, bit in enumerate([(chmask >> bit) & 1 for bit in range(8)]) if bit]
             # adjust number of events accordingly
             nevts *= nch
 
         nblocks = len(list(f[digi].keys()))
-        log.info(f"Found a total of {nevts} samples (or events) stored in {nblocks} data blocks")
+        log.info("Found a total of {} samples (or events) for {} active channels stored in {} data blocks".format(nevts, len(channels), nblocks))
 
         # reserve memory for numpy data array holding events
         data = np.zeros(nevts, dtype=evtform)

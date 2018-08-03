@@ -288,7 +288,7 @@ def init_logging(logger, log_level = "INFO"):
 
 
 if __name__ == "__main__":
-    log = init_logging('mapmt_plotter')
+    log = init_logging('digiviz')
 
     # command line argument parsing
     argv = sys.argv

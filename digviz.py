@@ -187,7 +187,7 @@ def plot_persistantTrace(measurements, query=None, labels=None):
 def plot_samples(measurements, query=None, labels=None):
     fig, ax = plt.subplots()
     # set up colors
-    cmap = plt.get_cmap('gnuplot')
+    cmap = plt.get_cmap('jet')
     colors = [cmap(i) for i in np.linspace(0, 1, len(measurements))]
 
     for idx, df in enumerate(measurements):
@@ -202,10 +202,41 @@ def plot_samples(measurements, query=None, labels=None):
             samples = df.query(query)['samples']
         else:
             samples = df['samples']
-        for s in samples:
-            p = ax.plot(range(len(s)), s, color=colors[idx])
-        ax.legend(p, [l])
+        for sidx, s in enumerate(samples):
+            ax.plot(range(len(s)), s, color=colors[idx],
+                    label=f"{l}" if sidx==0 else "_nolegend_")
+        plt.legend()
     return fig, ax
+
+def plot_samples_per_channel(measurements, query=None, labels=None):
+    fig, ax = plt.subplots()
+
+    for idx, df in enumerate(measurements):
+        l = "file {}".format(idx)
+        try:
+            l = labels[idx]
+        except:
+            pass
+        if not 'samples' in df.columns:
+            continue
+        if query is not None:
+            gb = df.query(query).groupby(['ch'])
+        else:
+            gb = df.groupby(['ch'])
+        # set up colors
+        cmap = plt.get_cmap('jet')
+        colors = [cmap(i) for i in np.linspace(0, 1, len(gb))]
+        for name, grouped_df in gb:
+            if query is not None:
+                samples = grouped_df.query(query)['samples']
+            else:
+                samples = grouped_df['samples']
+            for sidx, s in enumerate(samples):
+                ax.plot(range(len(s)), s, color=colors[name],
+                        label=f"{l} ch {name}" if sidx==0 else "_nolegend_")
+        plt.legend()
+    return fig, ax
+
 
 def plot_ph_per_channel(measurements, query=None, labels=None):
     fig, ax = plt.subplots()

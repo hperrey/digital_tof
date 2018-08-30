@@ -84,7 +84,7 @@ def load_h5(file_name):
                 if dformat == DataType.STANDARD:
                     # split the combined samples for all channels and create single events
                     for i,s in enumerate(np.split(evt[4],nch)):
-                        data[idx*nch+i] = np.array((evt[2], evt[0], np.uint8(channels[i]), s), dtype=evtform)
+                        data[idx*nch+i] = tuple([evt[2], evt[0], np.uint8(channels[i]), s])
         df = pd.DataFrame(data)
         # add an identifier column for the digitizer model+serial
         df["digitizer"] = str(digi) # TODO str wastes storage space here; keep a uint8 digitizer index and a map to the name instead?

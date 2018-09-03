@@ -1,0 +1,5 @@
+#ignore the data files#
+#######################
+*.txt
+*.h5
+*.csv

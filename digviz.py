@@ -9,6 +9,7 @@ import sys
 import os
 import argparse
 import matplotlib
+from math import ceil as round_up
 matplotlib.use('Qt5Agg')  # nice, but issue with interactive use e.g. in
                           # Jupyter; see
                           # http://matplotlib.org/faq/usage_faq.html#what-is-a-backend
@@ -83,6 +84,7 @@ def load_h5(file_name):
         for idx, evt in enumerate([e for dblock in list(f[digi].keys()) for e in f[digi][dblock]]):
                 if dformat == DataType.STANDARD:
                     # split the combined samples for all channels and create single events
+                    #evt[2]=channelnumber, evt[0]=timestamp, s=samples, i=nch=sum of 1 in binary rep of channel mask
                     for i,s in enumerate(np.split(evt[4],nch)):
                         data[idx*nch+i] = tuple([evt[2], evt[0], np.uint8(channels[i]), s])
         df = pd.DataFrame(data)
@@ -118,7 +120,86 @@ def calculate_time_difference(dataframe):
             format(row.name, row['ts'], row['evtno'], row['delta_ts']))
     dataframe.loc[
         dataframe.delta_ts < 0,
-            'delta_ts'] += 4294967295  # add 32-bit max value where ever there was a overflow
+            'delta_ts'] += 2147483647  # add half of 32-bit max value where ever there was a overflow
+
+def cfd(samples, frac):
+    peak = np.max(samples)
+    refpoint = 0
+    for i in range(0,len(samples)):
+        if samples[i]>= frac*peak:
+            refpoint = i
+            break
+    return refpoint
+
+def process_frame(dataframe, threshold=[10,25], frac=0.5):
+    event_index = 0
+    length = len(dataframe)
+    pr_samples = [0]*length
+    pr_ts = np.array([0]*length,dtype=np.uint32)
+    pr_evtno = np.array([0]*length, dtype=np.uint32)
+    pr_ch = np.array([0]*length,dtype=np.uint8)
+    pr_digitizer = np.array(['']*length, dtype=str)
+    refpoint = np.array([0]*length, dtype=np.int16)
+    for i in range(0, length):
+        if i%10 == 0:
+            p = round_up(100*i/length)
+            sys.stdout.write("\rprocessing dataframe %d%%" % p)
+            sys.stdout.flush()
+
+        #shift baseline using first 20 sample points.
+        pr_samples[i] = dataframe.samples[i].astype(np.int16)
+        pr_samples[i] -= np.int((sum(pr_samples[i][0:20])/20))
+
+        peak_index = np.argmax(np.absolute(pr_samples[i]))
+        #print(event_index, ' , ', peak_index)
+        if abs(pr_samples[i][peak_index]) >= threshold[dataframe.ch[i]]:
+            if pr_samples[i][peak_index] < 0:
+                pr_samples[i] *= -1
+            #We have an acceptable event, so we save it
+            pr_samples[event_index] = pr_samples[i]
+            pr_ts[event_index] = dataframe.ts[i]
+            pr_evtno[event_index] = dataframe.evtno[i]
+            pr_ch[event_index] = dataframe.ch[i]
+            pr_digitizer[event_index] = dataframe.digitizer[i]
+            refpoint[event_index] = cfd(dataframe.samples[i], frac)
+            event_index += 1
+    #Some event were sorted out, so we drop the redundant elements in the lists
+    pr_samples = pr_samples[0:event_index]
+    pr_ts = pr_ts[0:event_index]
+    pr_evtno = pr_evtno[0:event_index]
+    pr_ch = pr_ch[0:event_index]
+    pr_digitizer = pr_digitizer[0:event_index]
+    refpoint = refpoint[0:event_index]
+    return pd.DataFrame({"samples":pr_samples,
+                         "ts":pr_ts,
+                         "evtno":pr_evtno,
+                         "ch":pr_ch,
+                         "digitizer":pr_digitizer,
+                         "refpoint":refpoint})
+
+def tof_spectrum(frame, fac=8, tolerance = 100):
+    counter=0
+    ne213=frame.query("ch==0")
+    yap=frame.query("ch==1")
+    ymin=0
+    tof_hist = np.histogram([], 2*tolerance, range=(-tolerance, tolerance))
+    for ne, row in ne213.iterrows():
+        counter += 1
+        k = round_up(100*counter/len(ne213))
+        sys.stdout.write("\rGenerating tof spectrum %d%%" % k)
+        sys.stdout.flush()
+        for y, row in yap.iterrows():
+            Delta=(fac*ne213.ts[ne]+ne213.refpoint[ne])-(fac*yap.ts[y]+yap.refpoint[y])
+            if Delta > tolerance:
+                ymin = y
+            if -tolerance < Delta <tolerance:
+                tof_hist[0][tolerance+int(Delta)] += 1
+            elif Delta < -tolerance:
+                break
+    return tof_hist
+
+
+
 
 def plot_ch(measurements, labels=None):
     fig, ax = plt.subplots()

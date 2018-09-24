@@ -3,3 +3,5 @@
 *.txt
 *.h5
 *.csv
+*.cfg
+*.pyc

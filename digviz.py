@@ -107,6 +107,7 @@ def load_df(file_name):
         print(f"Unknown file ending, only supported types are 'csv' and 'h5': {file_name}")
         sys.exit(2)
 
+
 def calculate_time_difference(dataframe):
     """
     Adds a column 'delta_ts' with time difference between neighbouring
@@ -122,8 +123,7 @@ def calculate_time_difference(dataframe):
         dataframe.delta_ts < 0,
             'delta_ts'] += 2147483647  # add half of 32-bit max value where ever there was a overflow
 
-def cfd(samples, frac):
-    peak = np.max(samples)
+def cfd(samples, peak, frac):
     refpoint = 0
     for i in range(0,len(samples)):
         if samples[i]>= frac*peak:
@@ -131,15 +131,40 @@ def cfd(samples, frac):
             break
     return refpoint
 
-def process_frame(dataframe, threshold=[10,25], frac=0.5):
+def find_edges(samples, point):
+    edges = [0,0]
+    for i in range(point, 0, -1):
+        if samples[i]<2:
+            edges[0]=i
+            break
+    for i in range(point, len(samples)):
+        if samples[i]<2:
+            edges[1]=i
+            break
+    return edges
+
+def process_frame(dataframe, threshold=[20,20,20,20,20,20,20,20], frac=0.5):
+    """Process a dataframe to extract more features: area, longate and shortgate area, edges, height,
+    alignment/refpoint, and to correct the timestamp.
+    Parameters: dataframe: the dataframe to be processed, Threshold: 8 element list specifying pulse heightthreshold for each channel,
+    frac: the constant fraction used in the cfd, sg and lg: the fraction of the pulse to be used in long and short gate integration."""
     event_index = 0
+    nTimeResets = 0
     length = len(dataframe)
     pr_samples = [0]*length
-    pr_ts = np.array([0]*length,dtype=np.uint32)
+    left = np.array([0]*length, dtype=np.int16)
+    right = np.array([0]*length, dtype=np.int16)
+    pr_ts = np.array([0]*length,dtype=np.uint64)
     pr_evtno = np.array([0]*length, dtype=np.uint32)
     pr_ch = np.array([0]*length,dtype=np.uint8)
     pr_digitizer = np.array(['']*length, dtype=str)
     refpoint = np.array([0]*length, dtype=np.int16)
+    height = np.array([0]*length, dtype=np.int16)
+    area = np.array([0]*length, dtype=np.int16)
+    longgate = np.array([0]*length, dtype=np.int16)
+    lg=0.9
+    shortgate = np.array([0]*length, dtype=np.int16)
+    sg=0.20
     for i in range(0, length):
         if i%10 == 0:
             p = round_up(100*i/length)
@@ -150,19 +175,35 @@ def process_frame(dataframe, threshold=[10,25], frac=0.5):
         pr_samples[i] = dataframe.samples[i].astype(np.int16)
         pr_samples[i] -= np.int((sum(pr_samples[i][0:20])/20))
 
+        #keep track of the timestamp resets
+        if i > 0:
+            if dataframe.ts[i] < dataframe.ts[i-1]:
+                nTimeResets += 1
+        #apply threshold and make all pulses positive
         peak_index = np.argmax(np.absolute(pr_samples[i]))
-        #print(event_index, ' , ', peak_index)
         if abs(pr_samples[i][peak_index]) >= threshold[dataframe.ch[i]]:
             if pr_samples[i][peak_index] < 0:
                 pr_samples[i] *= -1
-            #We have an acceptable event, so we save it
-            pr_samples[event_index] = pr_samples[i]
-            pr_ts[event_index] = dataframe.ts[i]
-            pr_evtno[event_index] = dataframe.evtno[i]
-            pr_ch[event_index] = dataframe.ch[i]
-            pr_digitizer[event_index] = dataframe.digitizer[i]
-            refpoint[event_index] = cfd(dataframe.samples[i], frac)
-            event_index += 1
+            left[i], right[i] = find_edges(pr_samples[i], peak_index)
+            #check if events are fully contained in event window and of a certain width
+            if right[i]-left[i]>5:
+                left[event_index] = left[i]
+                right[event_index] = right[i]
+                #We have an acceptable event, so we save it
+                pr_samples[event_index] = pr_samples[i]
+                pr_ts[event_index] = (dataframe.ts[i]+nTimeResets*2147483647)
+                pr_evtno[event_index] = dataframe.evtno[i]
+                pr_ch[event_index] = dataframe.ch[i]
+                pr_digitizer[event_index] = dataframe.digitizer[i]
+                height[event_index]=pr_samples[event_index][peak_index]
+                refpoint[event_index] = cfd(pr_samples[event_index], height[event_index],frac)
+                area[event_index] = np.trapz(pr_samples[event_index][left[event_index]:right[event_index]])
+                width = right[event_index]-left[event_index]
+                longgate[event_index] = np.trapz(pr_samples[event_index][left[event_index]:left[event_index]+int(lg*width)])
+                shortgate[event_index] = np.trapz(pr_samples[event_index][left[event_index]:left[event_index]+int(sg*width)])
+                #longgate[event_index] = np.trapz(pr_samples[event_index][edges[event_index][0]:edges[event_index][0]+int(lg*width)])
+                #shortgate[event_index] = np.trapz(pr_samples[event_index][edges[event_index][0]:edges[event_index][0]+int(sg*width)])
+                event_index += 1
     #Some event were sorted out, so we drop the redundant elements in the lists
     pr_samples = pr_samples[0:event_index]
     pr_ts = pr_ts[0:event_index]
@@ -170,26 +211,40 @@ def process_frame(dataframe, threshold=[10,25], frac=0.5):
     pr_ch = pr_ch[0:event_index]
     pr_digitizer = pr_digitizer[0:event_index]
     refpoint = refpoint[0:event_index]
+    left = left[0:event_index]
+    right = right[0:event_index]
+    height = height[0:event_index]
+    area = area[0:event_index]
+    longgate = longgate[0:event_index]
+    shortgate = shortgate[0:event_index]
     return pd.DataFrame({"samples":pr_samples,
                          "ts":pr_ts,
                          "evtno":pr_evtno,
                          "ch":pr_ch,
                          "digitizer":pr_digitizer,
-                         "refpoint":refpoint})
+                         "refpoint":refpoint,
+                         "left":left,
+                         "right":right,
+                         "height":height,
+                         "area":area,
+                         "longgate":longgate,
+                         "shortgate":shortgate})
 
-def tof_spectrum(frame, fac=8, tolerance = 100):
+def tof_spectrum(frame, fac=8, tolerance = 1000):
+    #Needs to be generalised to different channels!
     counter=0
-    ne213=frame.query("ch==0")
-    yap=frame.query("ch==1")
-    ymin=0
+    ne213 = fac*frame.query("ch==0").ts.values+frame.query("ch==0").refpoint.values
+    yap = fac*frame.query("ch==1").ts.values+frame.query("ch==1").refpoint.values
+    ymin = 0
     tof_hist = np.histogram([], 2*tolerance, range=(-tolerance, tolerance))
-    for ne, row in ne213.iterrows():
+    for ne in range(0, len(ne213)):
         counter += 1
         k = round_up(100*counter/len(ne213))
         sys.stdout.write("\rGenerating tof spectrum %d%%" % k)
         sys.stdout.flush()
-        for y, row in yap.iterrows():
-            Delta=(fac*ne213.ts[ne]+ne213.refpoint[ne])-(fac*yap.ts[y]+yap.refpoint[y])
+        for y in range(ymin,len(yap)):
+            print(ne, ':', y)
+            Delta=ne213[ne]-yap[y]
             if Delta > tolerance:
                 ymin = y
             if -tolerance < Delta <tolerance:

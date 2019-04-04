@@ -10,7 +10,7 @@ import os
 import argparse
 import matplotlib
 from math import ceil as round_up
-matplotlib.use('Qt5Agg')  # nice, but issue with interactive use e.g. in
+#matplotlib.use('Qt5Agg')  # nice, but issue with interactive use e.g. in
                           # Jupyter; see
                           # http://matplotlib.org/faq/usage_faq.html#what-is-a-backend
 import matplotlib.pyplot as plt
@@ -38,7 +38,7 @@ def load_csv(file_name):
     '''
     return pd.read_csv(file_name, sep=" ", header=None, names=['ts','dig','ch','ph'])
 
-def load_h5(file_name):
+def load_h5(file_name, max_evts = None):
     """
     Loads data stored with JADAQ from an HDF5 file. Supports so far:
     - Standard wave function (recorded with XX751)
@@ -77,16 +77,27 @@ def load_h5(file_name):
         nblocks = len(list(f[digi].keys()))
         log.info("Found a total of {} samples (or events) for {} active channels stored in {} data blocks".format(nevts, len(channels), nblocks))
 
+        if max_evts:
+            log.info(f"Limiting readout to {max_evts} of {nevts} events")
+            nevts = max_evts
+
         # reserve memory for numpy data array holding events
         data = np.zeros(nevts, dtype=evtform)
 
         # loop over all events in all data blocks stored for this digitizer
-        for idx, evt in enumerate([e for dblock in list(f[digi].keys()) for e in f[digi][dblock]]):
-                if dformat == DataType.STANDARD:
-                    # split the combined samples for all channels and create single events
-                    #evt[2]=channelnumber, evt[0]=timestamp, s=samples, i=nch=sum of 1 in binary rep of channel mask
-                    for i,s in enumerate(np.split(evt[4],nch)):
-                        data[idx*nch+i] = tuple([evt[2], evt[0], np.uint8(channels[i]), s])
+        idx = 0
+        try:
+            for dblock in list(f[digi].keys()):
+                for evt in f[digi][dblock]:
+                    if dformat == DataType.STANDARD:
+                        # split the combined samples for all channels and create single events
+                        #evt[2]=channelnumber, evt[0]=timestamp, s=samples, i=nch=sum of 1 in binary rep of channel mask
+                        for i,s in enumerate(np.split(evt[4],nch)):
+                           data[idx*nch+i] = tuple([evt[2], evt[0], np.uint8(channels[i]), s])
+                    idx += 1
+        except IndexError:
+            log.info(f"Specified read-out limit reached")
+
         df = pd.DataFrame(data)
         # add an identifier column for the digitizer model+serial
         df["digitizer"] = str(digi) # TODO str wastes storage space here; keep a uint8 digitizer index and a map to the name instead?

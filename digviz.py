@@ -59,9 +59,6 @@ def load_h5(file_name, max_evts = None):
         log.info(f"Data format for digitizer {digi}: {dformat}")
 
         if dformat == DataType.STANDARD:
-            evtform = np.dtype([('evtno', np.uint32), ('ts', np.uint32), ('ch', np.uint8),
-                                ('samples', np.object)])
-
             # data length calculation
             nevts = sum([len(f[digi][g]) for g in f[digi].keys()])
             # each event consists of several active channels; get number from channel mask of first event
@@ -73,11 +70,19 @@ def load_h5(file_name, max_evts = None):
             channels = [position for position, bit in enumerate([(chmask >> bit) & 1 for bit in range(8)]) if bit]
             # adjust number of events accordingly
             nevts *= nch
+            # define data type
+            evtform = np.dtype([('evtno', np.uint32), ('ts', np.uint32), ('ch', np.uint8),
+                                ('samples', np.object)])
+            # alternative solution (no significant speedup observed so far):
+            # (requires 'tolist()' call when converting to DataFrame)
+            # evtform = np.dtype([('evtno', np.uint32), ('ts', np.uint32), ('ch', np.uint8),
+            #                    ('samples', np.uint16, len(first_event[4]))])
+
 
         nblocks = len(list(f[digi].keys()))
         log.info("Found a total of {} samples (or events) for {} active channels stored in {} data blocks".format(nevts, len(channels), nblocks))
 
-        if max_evts:
+        if max_evts && max_evts<nevts:
             log.info(f"Limiting readout to {max_evts} of {nevts} events")
             nevts = max_evts
 
@@ -93,11 +98,12 @@ def load_h5(file_name, max_evts = None):
                         # split the combined samples for all channels and create single events
                         #evt[2]=channelnumber, evt[0]=timestamp, s=samples, i=nch=sum of 1 in binary rep of channel mask
                         for i,s in enumerate(np.split(evt[4],nch)):
-                           data[idx*nch+i] = tuple([evt[2], evt[0], np.uint8(channels[i]), s])
+                            data[idx*nch+i] = tuple([evt[2], evt[0], np.uint8(channels[i]), s])
                     idx += 1
         except IndexError:
             log.info(f"Specified read-out limit reached")
 
+#        df = pd.DataFrame(data.tolist())
         df = pd.DataFrame(data)
         # add an identifier column for the digitizer model+serial
         df["digitizer"] = str(digi) # TODO str wastes storage space here; keep a uint8 digitizer index and a map to the name instead?

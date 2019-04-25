@@ -82,7 +82,7 @@ def load_h5(file_name, max_evts = None):
         nblocks = len(list(f[digi].keys()))
         log.info("Found a total of {} samples (or events) for {} active channels stored in {} data blocks".format(nevts, len(channels), nblocks))
 
-        if max_evts && max_evts<nevts:
+        if max_evts and max_evts<nevts:
             log.info(f"Limiting readout to {max_evts} of {nevts} events")
             nevts = max_evts
 
@@ -101,13 +101,14 @@ def load_h5(file_name, max_evts = None):
                             data[idx*nch+i] = tuple([evt[2], evt[0], np.uint8(channels[i]), s])
                     idx += 1
         except IndexError:
-            log.info(f"Specified read-out limit reached")
+            log.info(f"Specified read-in limit reached")
 
 #        df = pd.DataFrame(data.tolist())
         df = pd.DataFrame(data)
         # add an identifier column for the digitizer model+serial
         df["digitizer"] = str(digi) # TODO str wastes storage space here; keep a uint8 digitizer index and a map to the name instead?
         dfs.append(df)
+    log.info(f"File read-in done")
 
     # concatenate results (if needed)
     if len(dfs) == 1:

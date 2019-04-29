@@ -16,6 +16,10 @@ from math import ceil as round_up
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+import dask.array as da, dask.dataframe as dd
+import dask
+
 import logging
 
 import h5py
@@ -38,10 +42,97 @@ def load_csv(file_name):
     '''
     return pd.read_csv(file_name, sep=" ", header=None, names=['ts','dig','ch','ph'])
 
+def load_h5_da(file_name):
+    """
+    Loads digitizer event data from an HDF5 file into a Dask DataFrame.
+
+    Supports so far:
+    - JADAQ Standard waveform samples format (recorded with XX751)
+    """
+    log = init_logging('digviz')  # set up logging
+
+    f = h5py.File(file_name, 'r')
+    # TODO check version of data format in file and give out warning if newer than expected
+
+    all_digi = list(f.keys())
+    log.info("File {} contains data from digitizers: {}".format(file_name, ",".join(all_digi)))
+
+    # list holding dataframes (to be concatenated later)
+    dfs = []
+
+    for digi in all_digi:
+        # TODO catch exception should data format not be known
+        dformat = DataType(f[digi].attrs.get('JADAQ_DATA_TYPE'))
+        log.info(f"Data format for digitizer {digi}: {dformat}")
+
+        if dformat == DataType.STANDARD:
+            # data length calculation
+            nevts = sum([len(f[digi][g]) for g in f[digi].keys()])
+            # each event consists of several active channels; get number from channel mask of first event
+            first_data = list(f[digi].keys())[0]
+            first_event = f[digi][first_data][0]
+            chmask = first_event['channelMask']
+            nch = bin(chmask).count('1') # count active channels in mask
+            # compose list of active channels from channel mask
+            channels = [position for position, bit in enumerate([(chmask >> bit) & 1 for bit in range(8)]) if bit]
+            # adjust number of events accordingly
+            nevts *= nch
+            # find number of samples
+            nsamples = first_event['num_samples']
+
+        nblocks = len(list(f[digi].keys()))
+        log.info("Found a total of {} samples (or events) for {} active channels stored in {} data blocks".format(nevts, len(channels), nblocks))
+
+        # loop over data blocks
+        for dblock in list(f[digi].keys()):
+            # create dask array from HDF5 data for this data block
+            d = da.from_array(f[digi][dblock], chunks=f[digi][dblock].shape, lock=True) # use lock to prevent concurrency issues with HDF5
+
+            if dformat == DataType.STANDARD:
+                def getchannel(arr, nch, ch, shape):
+                    """helper function to split samples array 'arr' into 'nch' individual channels
+                       and return the one for 'ch' in the shape 'shape'"""
+                    if len(arr) == 1:
+                        # This is apply_along_axis's test data
+                        # see issue https://github.com/dask/dask/pull/3742
+                        # need to provide the output shape and type
+                        return np.ones(int(shape[1]/nch), dtype=np.uint16)
+                    else:
+                        return np.split(arr,nch, axis=0)[ch]
+
+                # loop over all channels and create dataframes for each
+                for ch in range(nch):
+                    # create dask dataframe with event information from dask array
+                    ddf = dd.concat([dd.from_dask_array(d[c]) for c in ['eventNo', 'time']], axis=1)
+                    ddf.columns = ['evtno', 'ts']
+                    ddf['channel'] = np.uint8(channels[ch])
+                    ddf['digitizer'] = str(digi) # TODO str wastes storage space here; keep a uint8 digitizer index and a map to the name instead?
+                    # split samples according to channel
+                    s = d['samples']
+                    sch = da.apply_along_axis(getchannel,axis=1, arr=s, nch=nch, ch=ch, shape=s.shape)
+                    # create dask dataframe with samples and combine all resulting columns
+                    # (i.e. samples) into one single ndarray
+                    ddfsamp = dd.from_dask_array(sch).apply(lambda r: np.array(tuple(r)), axis=1, meta=np.object)
+                    # assemble the dataframes for this event
+                    ddf = dd.concat([ddf, ddfsamp], axis=1)
+                    ddf.columns = ['evtno', 'ts', 'channel', 'digitizer', 'samples']
+                    # append to list
+                    dfs.append(ddf)
+
+    # concatenate all dataframes into a single one
+    # TODO divisions do not increase monotonically, fix
+    # TODO index does not increase monotonically, fix (or replace -> Pandas?)
+    # TODO consider creating DataFrame from list of Arrays instead
+    ddf = dd.concat(dfs, axis=0, interleave_partitions=True)
+    log.info(f"File read-in done")
+    return ddf
+
 def load_h5(file_name, max_evts = None):
     """
-    Loads data stored with JADAQ from an HDF5 file. Supports so far:
-    - Standard wave function (recorded with XX751)
+    Loads digitizer event data from an HDF5 file into a Pandas DataFrame.
+
+    Supports so far:
+    - JADAQ Standard waveform samples format (recorded with XX751)
     """
     log = init_logging('digviz')  # set up logging
 

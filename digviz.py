@@ -119,10 +119,17 @@ def load_h5_da(file_name):
                     # append to list
                     dfs.append(ddf)
 
-    # concatenate all dataframes into a single one
-    # TODO divisions do not increase monotonically, fix
+    # divisions do not increase monotonically, fix manually
+    start = 0
+    for df in dfs:
+        div = df.divisions
+        df.divisions = tuple([start, div[1]+start])
+        start = div[1]+start+1
+        print (f"start: {start}, old: {div}, new: {df.divisions}")
+
     # TODO index does not increase monotonically, fix (or replace -> Pandas?)
     # TODO consider creating DataFrame from list of Arrays instead
+    # concatenate all dataframes into a single one
     ddf = dd.concat(dfs, axis=0, interleave_partitions=True)
     log.info(f"File read-in done")
     return ddf
